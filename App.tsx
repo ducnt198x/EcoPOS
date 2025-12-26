@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
@@ -14,6 +15,7 @@ import Settings from './pages/Settings';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { DataProvider } from './contexts/DataContext';
 import { LanguageProvider } from './contexts/LanguageContext';
+import { PrinterProvider } from './contexts/PrinterContext';
 import { Role } from './types';
 
 // Protected Route Component
@@ -114,11 +116,13 @@ const App: React.FC = () => {
     <LanguageProvider>
       <AuthProvider>
         <DataProvider>
-          <HashRouter>
-            <Layout>
-              <AppRoutes />
-            </Layout>
-          </HashRouter>
+          <PrinterProvider>
+            <HashRouter>
+              <Layout>
+                <AppRoutes />
+              </Layout>
+            </HashRouter>
+          </PrinterProvider>
         </DataProvider>
       </AuthProvider>
     </LanguageProvider>

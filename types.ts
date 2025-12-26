@@ -8,6 +8,13 @@ export interface MenuItem {
   stock?: number;
 }
 
+export interface Category {
+  id: string;
+  name: string;
+  icon: string;
+  sortOrder?: number;
+}
+
 export interface CartItem extends MenuItem {
   quantity: number;
   notes?: string;

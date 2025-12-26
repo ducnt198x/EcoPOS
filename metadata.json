@@ -2,6 +2,7 @@
   "name": "EcoPOS - Smart Restaurant System",
   "description": "A comprehensive, modern POS system for restaurants including table management, inventory tracking, financial reporting, and seamless checkout flows.",
   "requestFramePermissions": [
-    "camera"
+    "camera",
+    "usb"
   ]
 }

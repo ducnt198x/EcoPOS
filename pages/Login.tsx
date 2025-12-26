@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -5,12 +6,14 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { Role } from '../types';
 import { supabase } from '../services/supabase';
 
+type AuthMode = 'signin' | 'signup' | 'forgot';
+
 const Login: React.FC = () => {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, resetPassword } = useAuth();
   const { t, language, setLanguage } = useLanguage();
   const navigate = useNavigate();
 
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>('signin');
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -28,7 +31,7 @@ const Login: React.FC = () => {
     setLoading(true);
 
     try {
-        if (isSignUp) {
+        if (authMode === 'signup') {
             // Public sign-ups are always 'cashier'
             const { data, error } = await signUp(email, password, name, role);
             if (error) throw error;
@@ -36,7 +39,7 @@ const Login: React.FC = () => {
             // Check if email confirmation is required (no session returned)
             if (data && !data.session && data.user) {
                  setAlert({ type: 'success', message: "Account created! Please check your email to confirm registration." });
-                 setIsSignUp(false); // Switch back to login mode
+                 setAuthMode('signin'); // Switch back to login mode
                  // Clear form fields
                  setEmail('');
                  setPassword('');
@@ -44,13 +47,17 @@ const Login: React.FC = () => {
                  return;
             }
 
-            // If auto-confirm is on, sign in immediately to check next steps
-            const { data: signInData, error: signInError } = await signIn(email, password);
-            if (signInError) throw signInError;
-            
-            // New cashiers go to tables
-            navigate('/tables');
+            // If we have a session, we are logged in automatically.
+            if (data && data.session) {
+                 navigate('/tables');
+            }
+        } else if (authMode === 'forgot') {
+            const { error } = await resetPassword(email);
+            if (error) throw error;
+            setAlert({ type: 'success', message: "Password reset link sent! Check your email." });
+            // Don't navigate, let them see the message
         } else {
+            // Sign In
             const { data, error } = await signIn(email, password);
             if (error) throw error;
 
@@ -76,8 +83,8 @@ const Login: React.FC = () => {
         // Specific handling for Email not confirmed error
         if (err.message && err.message.includes("Email not confirmed")) {
             setAlert({ type: 'error', message: "Email not confirmed. Please check your inbox." });
-        } else if (err.message && err.message.includes("Invalid login credentials")) {
-            setAlert({ type: 'error', message: "Invalid email or password. Please try again." });
+        } else if (err.message && (err.message.includes("Invalid login credentials") || err.message.includes("client not initialized"))) {
+            setAlert({ type: 'error', message: "Login failed. Please check your email and password." });
         } else {
             setAlert({ type: 'error', message: err.message || "An error occurred" });
         }
@@ -86,10 +93,26 @@ const Login: React.FC = () => {
     }
   };
 
-  const toggleMode = () => {
-      setIsSignUp(!isSignUp);
+  const handleModeChange = (mode: AuthMode) => {
+      setAuthMode(mode);
       setAlert(null);
       setPassword(''); // Clear password on switch for security
+  };
+
+  const getTitle = () => {
+      switch (authMode) {
+          case 'signup': return t('login.create_account');
+          case 'forgot': return "Reset Password"; // You might want to add 'login.forgot_password' to translations
+          default: return t('login.welcome');
+      }
+  };
+
+  const getSubtitle = () => {
+      switch (authMode) {
+          case 'signup': return t('login.create_subtitle');
+          case 'forgot': return "Enter your email to receive a recovery link.";
+          default: return t('login.subtitle');
+      }
   };
 
   return (
@@ -148,9 +171,9 @@ const Login: React.FC = () => {
         {/* Right Side - Form */}
         <div className="flex flex-col justify-center p-8 md:p-12 relative">
            <div className="mb-8">
-              <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">{isSignUp ? t('login.create_account') : t('login.welcome')}</h2>
+              <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">{getTitle()}</h2>
               <p className="text-slate-500 dark:text-gray-400">
-                  {isSignUp ? t('login.create_subtitle') : t('login.subtitle')}
+                  {getSubtitle()}
               </p>
            </div>
 
@@ -169,7 +192,7 @@ const Login: React.FC = () => {
            )}
 
            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              {isSignUp && (
+              {authMode === 'signup' && (
                   <div>
                       <label className="block text-xs font-bold text-slate-500 dark:text-gray-400 uppercase mb-1">{t('login.fullname')}</label>
                       <div className="relative">
@@ -205,50 +228,76 @@ const Login: React.FC = () => {
                   </div>
               </div>
 
-              <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-gray-400 uppercase mb-1">{t('login.password')}</label>
-                  <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
-                          <span className="material-symbols-outlined text-[20px]">lock</span>
+              {authMode !== 'forgot' && (
+                  <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-gray-400 uppercase mb-1">{t('login.password')}</label>
+                      <div className="relative">
+                          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                              <span className="material-symbols-outlined text-[20px]">lock</span>
+                          </div>
+                          <input 
+                            type={showPassword ? "text" : "password"}
+                            required 
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            className="w-full h-12 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-surface-dark pl-11 pr-12 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-gray-600"
+                            placeholder="••••••••"
+                          />
+                          <button 
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                          >
+                              <span className="material-symbols-outlined text-[20px]">{showPassword ? 'visibility_off' : 'visibility'}</span>
+                          </button>
                       </div>
-                      <input 
-                        type={showPassword ? "text" : "password"}
-                        required 
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full h-12 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-surface-dark pl-11 pr-12 text-slate-900 dark:text-white focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-gray-600"
-                        placeholder="••••••••"
-                      />
-                      <button 
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-                      >
-                          <span className="material-symbols-outlined text-[20px]">{showPassword ? 'visibility_off' : 'visibility'}</span>
-                      </button>
+                      
+                      {authMode === 'signin' && (
+                          <div className="flex justify-end mt-2">
+                              <button 
+                                type="button" 
+                                onClick={() => handleModeChange('forgot')}
+                                className="text-xs font-bold text-slate-500 hover:text-primary transition-colors"
+                              >
+                                  Forgot Password?
+                              </button>
+                          </div>
+                      )}
                   </div>
-              </div>
+              )}
 
-              <button 
-                type="submit" 
-                disabled={loading}
-                className="mt-4 w-full h-12 bg-primary hover:bg-primary-dark text-background-dark font-bold rounded-xl shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                 {loading && <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>}
-                 {isSignUp ? t('login.create_account') : t('login.signin')}
-              </button>
+              <div className="flex gap-3 mt-2">
+                  <button 
+                    type="submit" 
+                    disabled={loading}
+                    className="flex-1 h-12 bg-primary hover:bg-primary-dark text-background-dark font-bold rounded-xl shadow-lg shadow-primary/20 transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                     {loading && <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>}
+                     {authMode === 'signup' ? t('login.create_account') : authMode === 'forgot' ? "Send Reset Link" : t('login.signin')}
+                  </button>
+              </div>
            </form>
 
-           <div className="mt-8 text-center">
-              <p className="text-sm text-slate-500 dark:text-gray-400">
-                  {isSignUp ? t('login.already_have_account') : t('login.dont_have_account')}
+           <div className="mt-8 text-center space-y-3">
+              {authMode === 'forgot' ? (
                   <button 
-                    onClick={toggleMode}
-                    className="ml-2 font-bold text-primary hover:underline focus:outline-none"
+                    onClick={() => handleModeChange('signin')}
+                    className="font-bold text-slate-500 hover:text-primary transition-colors flex items-center justify-center gap-2 mx-auto"
                   >
-                      {isSignUp ? t('login.signin') : t('login.signup')}
+                      <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                      Back to Sign In
                   </button>
-              </p>
+              ) : (
+                  <p className="text-sm text-slate-500 dark:text-gray-400">
+                      {authMode === 'signup' ? t('login.already_have_account') : t('login.dont_have_account')}
+                      <button 
+                        onClick={() => handleModeChange(authMode === 'signup' ? 'signin' : 'signup')}
+                        className="ml-2 font-bold text-primary hover:underline focus:outline-none"
+                      >
+                          {authMode === 'signup' ? t('login.signin') : t('login.signup')}
+                      </button>
+                  </p>
+              )}
            </div>
         </div>
       </div>

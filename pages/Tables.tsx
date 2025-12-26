@@ -95,12 +95,18 @@ const Tables: React.FC = () => {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
-  const handleMouseDown = (e: React.MouseEvent, table: Table) => {
+  const handlePointerDown = (e: React.PointerEvent, table: Table) => {
     if (!isEditMode) {
         setSelectedTableId(table.id);
         return;
     }
+    // Prevent default touch actions like scrolling
     e.preventDefault();
+    e.stopPropagation();
+    
+    // Capture pointer to ensure we get move/up events even outside container
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
     setDraggingId(table.id);
     setSelectedTableId(table.id); // Also select it for editing
     setDragOffset({
@@ -109,26 +115,48 @@ const Tables: React.FC = () => {
     });
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent) => {
     if (!draggingId || !isEditMode) return;
+    
+    e.preventDefault();
+
+    // Map Boundaries
+    let bounds = { width: 2000, height: 2000 }; // Default large fallback
+    if (mapRef.current) {
+        const rect = mapRef.current.getBoundingClientRect();
+        bounds = { width: rect.width, height: rect.height };
+    }
     
     // Update LOCAL state for smooth UI
     setLocalTables(prev => prev.map(t => {
         if (t.id === draggingId) {
+            // Raw calculation
+            let rawX = e.clientX - dragOffset.x;
+            let rawY = e.clientY - dragOffset.y;
+
             // Snap to grid (10px)
-            const rawX = e.clientX - dragOffset.x;
-            const rawY = e.clientY - dragOffset.y;
+            let newX = Math.round(rawX / 10) * 10;
+            let newY = Math.round(rawY / 10) * 10;
+
+            // Boundary Constraint
+            const tableWidth = t.shape === 'round' ? 100 : 140;
+            const tableHeight = 100;
+            
+            // Constrain within map padding (e.g., 0 to width - tableWidth)
+            newX = Math.max(0, Math.min(newX, bounds.width - tableWidth));
+            newY = Math.max(0, Math.min(newY, bounds.height - tableHeight));
+
             return {
                 ...t,
-                x: Math.round(rawX / 10) * 10,
-                y: Math.round(rawY / 10) * 10
+                x: newX,
+                y: newY
             };
         }
         return t;
     }));
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent) => {
     if (draggingId) {
         const draggedTable = localTables.find(t => t.id === draggingId);
         if (draggedTable) {
@@ -136,6 +164,15 @@ const Tables: React.FC = () => {
             updateTable(draggedTable);
         }
         setDraggingId(null);
+        
+        // Release pointer capture
+        if (e.target instanceof HTMLElement) {
+            try {
+                e.target.releasePointerCapture(e.pointerId);
+            } catch (err) {
+                // Ignore if not captured
+            }
+        }
     }
   };
 
@@ -245,8 +282,6 @@ const Tables: React.FC = () => {
   return (
     <div 
         className="flex flex-col h-full w-full relative bg-[#f0f4f8] dark:bg-[#0f172a] overflow-hidden"
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
     >
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-4 bg-white dark:bg-surface-dark border-b border-gray-200 dark:border-white/5 z-20 shadow-sm shrink-0">
@@ -314,7 +349,7 @@ const Tables: React.FC = () => {
       {/* Map Area */}
       <div 
         ref={mapRef}
-        className="flex-1 relative overflow-hidden cursor-move select-none" 
+        className={`flex-1 relative overflow-hidden select-none touch-none ${isEditMode ? 'cursor-grab' : ''}`}
         style={{ 
             backgroundImage: `radial-gradient(${isEditMode ? '#94a3b8' : '#cbd5e1'} 1px, transparent 1px)`, 
             backgroundSize: '24px 24px',
@@ -326,26 +361,30 @@ const Tables: React.FC = () => {
                 const styles = getStatusStyles(table.status);
                 const isSelected = selectedTableId === table.id;
                 const isUpdated = updatedIds.has(table.id);
+                const isDragging = draggingId === table.id;
                 
                 return (
                 <div
                     key={table.id}
-                    onMouseDown={(e) => handleMouseDown(e, table)}
-                    className={`absolute flex flex-col items-center justify-center transition-all duration-500 ${styles.shadow} ${
+                    onPointerDown={(e) => handlePointerDown(e, table)}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    className={`absolute flex flex-col items-center justify-center transition-all duration-75 ${styles.shadow} ${
                         isEditMode ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
-                    } ${isUpdated ? 'ring-4 ring-primary ring-offset-2 ring-offset-[#f0f4f8] dark:ring-offset-[#0f172a] scale-105 z-50' : ''}`}
+                    } ${isUpdated ? 'ring-4 ring-primary ring-offset-2 ring-offset-[#f0f4f8] dark:ring-offset-[#0f172a] scale-105 z-50' : ''} ${isDragging ? 'z-[100] scale-110 shadow-2xl opacity-90' : ''}`}
                     style={{
                         top: table.y,
                         left: table.x,
                         width: table.shape === 'round' ? '100px' : '140px',
                         height: table.shape === 'round' ? '100px' : '100px',
                         borderRadius: table.shape === 'round' ? '50%' : '16px',
-                        transform: isSelected ? 'scale(1.05)' : 'scale(1)',
-                        zIndex: isSelected || draggingId === table.id ? 50 : 10
+                        transform: isSelected && !isDragging ? 'scale(1.05)' : 'scale(1)',
+                        zIndex: isDragging ? 100 : (isSelected ? 50 : 10),
+                        touchAction: 'none' // Critical for pointer events
                     }}
                 >
                     {/* Table Body */}
-                    <div className={`w-full h-full border-2 ${styles.bg} ${styles.border} ${table.shape === 'round' ? 'rounded-full' : 'rounded-2xl'} flex flex-col items-center justify-center relative overflow-hidden`}>
+                    <div className={`w-full h-full border-2 ${styles.bg} ${styles.border} ${table.shape === 'round' ? 'rounded-full' : 'rounded-2xl'} flex flex-col items-center justify-center relative overflow-hidden pointer-events-none`}>
                          
                          {/* Selection Ring */}
                          {isSelected && <div className="absolute inset-0 border-4 border-primary/50 rounded-inherit animate-pulse"></div>}
@@ -376,7 +415,7 @@ const Tables: React.FC = () => {
                     </div>
 
                     {/* Status Indicator Dot */}
-                    <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white dark:border-slate-800 ${styles.indicator} shadow-sm z-10`}></div>
+                    <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white dark:border-slate-800 ${styles.indicator} shadow-sm z-10 pointer-events-none`}></div>
 
                     {/* Visual Chairs (Purely decorative based on seat count) */}
                     <div className="absolute inset-0 pointer-events-none">
@@ -456,7 +495,14 @@ const Tables: React.FC = () => {
                              <p className="text-xs text-gray-500 uppercase tracking-wider font-bold mb-1">{t('tables.guests')}</p>
                              <div className="flex items-center gap-3">
                                 <button onClick={() => updateTableGuests(selectedTable.id, (selectedTable.guests || 1) - 1)} className="size-8 rounded-lg bg-white dark:bg-white/5 shadow-sm flex items-center justify-center hover:text-primary"><span className="material-symbols-outlined text-sm">remove</span></button>
-                                <span className="text-xl font-bold text-slate-900 dark:text-white">{selectedTable.guests || 1}</span>
+                                <input 
+                                    type="number"
+                                    min="1"
+                                    max="99"
+                                    value={selectedTable.guests || 1}
+                                    onChange={(e) => updateTableGuests(selectedTable.id, parseInt(e.target.value) || 1)}
+                                    className="w-12 text-center bg-transparent border-none text-xl font-bold text-slate-900 dark:text-white focus:ring-0 p-0 appearance-none"
+                                />
                                 <button onClick={() => updateTableGuests(selectedTable.id, (selectedTable.guests || 1) + 1)} className="size-8 rounded-lg bg-white dark:bg-white/5 shadow-sm flex items-center justify-center hover:text-primary"><span className="material-symbols-outlined text-sm">add</span></button>
                              </div>
                         </div>

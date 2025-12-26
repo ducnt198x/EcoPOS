@@ -1,12 +1,15 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import { useLanguage } from '../contexts/LanguageContext';
+import { usePrinter } from '../contexts/PrinterContext';
 
 const Settings: React.FC = () => {
   const { user, logout, updateProfile, updatePassword } = useAuth();
   const { taxRate, updateTaxRate } = useData();
   const { language, setLanguage, t } = useLanguage();
+  const { connectPrinter, disconnectPrinter, isConnected, device, error: printerError, printTest } = usePrinter();
 
   // Local UI State
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -200,6 +203,65 @@ const Settings: React.FC = () => {
               </button>
           </section>
 
+          {/* Hardware / Printer */}
+          <section className="bg-white dark:bg-surface-dark rounded-2xl shadow-sm border border-gray-100 dark:border-white/5 overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-100 dark:border-white/5">
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary">print</span>
+                      Hardware
+                  </h3>
+              </div>
+              <div className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${isConnected ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400' : 'bg-gray-100 text-gray-400 dark:bg-white/5'}`}>
+                              <span className="material-symbols-outlined text-2xl">usb</span>
+                          </div>
+                          <div>
+                              <p className="font-bold text-slate-900 dark:text-white">USB Thermal Printer</p>
+                              <p className="text-xs text-slate-500 dark:text-gray-400">
+                                  {isConnected 
+                                    ? `Connected: ${device?.productName || 'Unknown Device'}`
+                                    : 'Not connected'}
+                              </p>
+                              {printerError && <p className="text-xs text-red-500 mt-1 font-bold">{printerError}</p>}
+                          </div>
+                      </div>
+                      <div className="flex gap-2">
+                          {isConnected && (
+                              <button 
+                                onClick={printTest}
+                                className="px-4 py-2 rounded-xl bg-gray-100 dark:bg-white/10 text-slate-700 dark:text-white font-bold text-sm hover:bg-gray-200 dark:hover:bg-white/20 transition-colors"
+                              >
+                                Test Print
+                              </button>
+                          )}
+                          <button 
+                              onClick={isConnected ? disconnectPrinter : connectPrinter}
+                              className={`px-4 py-2 rounded-xl font-bold text-sm transition-all ${
+                                  isConnected 
+                                  ? 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400 hover:bg-red-100'
+                                  : 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 hover:opacity-90'
+                              }`}
+                          >
+                              {isConnected ? 'Disconnect' : 'Connect'}
+                          </button>
+                      </div>
+                  </div>
+                  
+                  {/* Troubleshooting Tip */}
+                  {!isConnected && (
+                      <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl flex items-start gap-3">
+                          <span className="material-symbols-outlined text-blue-500 text-xl mt-0.5">info</span>
+                          <div className="text-xs text-blue-800 dark:text-blue-300">
+                              <p className="font-bold mb-1">Cannot connect on Windows?</p>
+                              <p>Standard printer drivers block WebUSB. You may need to use a tool like <strong>Zadig</strong> to replace the driver with <strong>WinUSB</strong> for the browser to access it directly.</p>
+                          </div>
+                      </div>
+                  )}
+              </div>
+          </section>
+
           {/* General Settings */}
           <section className="bg-white dark:bg-surface-dark rounded-2xl shadow-sm border border-gray-100 dark:border-white/5 overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-100 dark:border-white/5">
@@ -381,7 +443,7 @@ const Settings: React.FC = () => {
 
           {/* About */}
           <section className="text-center py-6">
-              <p className="text-sm text-slate-400 dark:text-gray-500 font-medium">EcoPOS v1.0.2</p>
+              <p className="text-sm text-slate-400 dark:text-gray-500 font-medium">EcoPOS v1.0.3</p>
               <p className="text-xs text-slate-300 dark:text-gray-600 mt-1">© 2024 EcoPOS Systems. All rights reserved.</p>
           </section>
 

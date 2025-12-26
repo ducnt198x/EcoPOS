@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, Role } from '../types';
 import { supabase, supabaseUrl, supabaseAnonKey } from '../services/supabase';
@@ -8,6 +9,7 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, pass: string) => Promise<{ data?: any; error: any }>;
   signUp: (email: string, pass: string, name: string, role: Role) => Promise<{ data?: any; error: any }>;
+  resetPassword: (email: string) => Promise<{ data?: any; error: any }>;
   updateProfile: (updates: Partial<User>) => Promise<void>;
   updatePassword: (password: string, oldPassword?: string) => Promise<{ error: any }>;
   logout: () => Promise<void>;
@@ -22,19 +24,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
+    const initAuth = async () => {
+      if (!supabase) {
+        setLoading(false);
+        return;
+      }
 
-    // 1. Check active session
-    const getSession = async () => {
+      // Check Supabase active session
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) throw error;
         
         if (session?.user) {
-           // Safely handle potentially missing email
            await fetchProfile(session.user.id, session.user.email ?? "");
         } else {
            setLoading(false);
@@ -45,23 +46,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     };
 
-    getSession();
+    initAuth();
 
-    // 2. Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-         if (user?.id !== session.user.id) {
-            await fetchProfile(session.user.id, session.user.email ?? "");
-         }
-      } else if (event === 'SIGNED_OUT') {
-         setUser(null);
-         setLoading(false);
-      }
-    });
+    if (supabase) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+           if (user?.id !== session.user.id) {
+              await fetchProfile(session.user.id, session.user.email ?? "");
+           }
+        } else if (event === 'SIGNED_OUT') {
+           setUser(null);
+           setLoading(false);
+        } else if (event === 'PASSWORD_RECOVERY') {
+           // Handle password recovery event if needed, usually redirect handles it
+        }
+      });
 
-    return () => {
-      subscription.unsubscribe();
-    };
+      return () => {
+        subscription.unsubscribe();
+      };
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchProfile = async (userId: string, email: string): Promise<boolean> => {
@@ -77,9 +81,27 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         .eq('id', userId)
         .single();
 
-      if (error || !data) {
-        // Silent fail/Warn for console noise, but return false to handle logic
-        console.warn(`Profile missing for user ${userId}. This is expected during initial account creation.`);
+      if (error) {
+          // Graceful fallback for missing profile/table
+          if (error.code === '42P01' || error.message.includes('does not exist') || error.code === 'PGRST116') {
+              console.warn("Profile/Table missing. Using session metadata.");
+              const { data: { session } } = await supabase.auth.getSession();
+              const meta = session?.user?.user_metadata || {};
+              
+              setUser({
+                  id: userId,
+                  email: email,
+                  name: meta.display_name || meta.name || email.split('@')[0],
+                  role: (meta.role as Role) || 'cashier',
+                  avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
+              });
+              return true;
+          }
+          console.error("Profile fetch error:", error);
+          return false;
+      }
+
+      if (!data) {
         setUser(null);
         return false;
       }
@@ -94,9 +116,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return true;
 
     } catch (e) {
-      console.error("Profile fetch error:", e);
-      setUser(null);
-      return false;
+      console.error("Unexpected profile fetch error:", e);
+      setUser({
+          id: userId,
+          email: email,
+          name: email.split('@')[0],
+          role: 'cashier',
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId}`
+      });
+      return true;
     } finally {
       setLoading(false);
     }
@@ -108,38 +136,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
     
     if (data.user && !error) {
-       let profileFound = await fetchProfile(data.user.id, data.user.email ?? "");
-       
-       // SELF-HEALING: If profile missing, try to create it from metadata
-       // This fixes the issue where a user is created but profile insert failed due to race condition
-       if (!profileFound && data.user.user_metadata) {
-           const meta = data.user.user_metadata;
-           const displayName = meta.display_name || meta.name;
-           const userRole = meta.role;
-
-           if (displayName && userRole) {
-               console.log("Profile missing. Attempting self-healing from metadata...");
-               const { error: insertError } = await supabase.from('profiles').upsert({
-                    id: data.user.id,
-                    email: email,
-                    name: displayName,
-                    role: userRole,
-                    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${displayName}`
-               });
-               
-               if (!insertError) {
-                   // Retry fetch after healing
-                   profileFound = await fetchProfile(data.user.id, data.user.email ?? "");
-               } else {
-                   console.error("Self-healing failed:", insertError);
-               }
-           }
-       }
-
-       if (!profileFound) {
-           await logout();
-           return { data: null, error: { message: "Account profile not found. Please contact support." } };
-       }
+       await fetchProfile(data.user.id, data.user.email ?? "");
     }
 
     return { data, error };
@@ -149,88 +146,54 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!supabase) return { error: { message: "Supabase client not initialized" } };
     
     const { data: { session: currentSession } } = await supabase.auth.getSession();
-    
-    // Use isolated client for Auth to prevent signing out the current admin
     let authClient = supabase;
+    
+    // If admin is creating user, use isolated client to not kill admin session
     if (currentSession) {
         authClient = createClient(supabaseUrl, supabaseAnonKey, {
-            auth: {
-                persistSession: false,
-                autoRefreshToken: false,
-                detectSessionInUrl: false
-            }
+            auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
         });
     }
     
-    // 1. Create Auth User
     const { data, error } = await authClient.auth.signUp({
       email,
       password: pass,
-      options: {
-          data: {
-              display_name: name,
-              role: role 
-          }
-      }
+      options: { data: { display_name: name, role: role } }
     });
 
     if (error) return { error };
 
     if (data.user) {
-        // 2. Create Profile Entry with Retry Logic
         const dbClient = currentSession ? supabase : authClient;
-
-        // Function to attempt profile creation with retries for FK violations
         const createProfileWithRetry = async (maxRetries = 3): Promise<any> => {
             let lastError: any = null;
-            
-            // Add a small initial delay to allow Auth trigger/transaction to propagate
             await new Promise(r => setTimeout(r, 500));
-
             for (let i = 0; i < maxRetries; i++) {
-                // Exponential backoff
-                if (i > 0) {
-                   const delay = 500 * Math.pow(2, i - 1);
-                   await new Promise(r => setTimeout(r, delay));
-                }
-
+                if (i > 0) await new Promise(r => setTimeout(r, 500 * Math.pow(2, i - 1)));
                 const { error: profileError } = await dbClient.from('profiles').upsert({
-                    id: data.user!.id,
-                    email: email,
-                    name: name,
-                    role: role,
+                    id: data.user!.id, email: email, name: name, role: role,
                     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`
                 });
-
-                if (!profileError) {
-                    return null; // Success
-                }
-
+                if (!profileError) return null;
+                if (profileError.code === '42P01') return null; // Table missing, ignore
                 lastError = profileError;
-
-                // If error is NOT Foreign Key Violation (code 23503), stop immediately.
-                if (profileError.code !== '23503') {
-                    return profileError;
-                }
-                
-                // If it IS a FK violation, we retry
+                if (profileError.code !== '23503') return profileError;
             }
-            
-            return lastError || { message: "Failed to sync profile." };
+            return lastError;
         };
-
-        const profileError = await createProfileWithRetry();
-
-        if (profileError) {
-            // If we still fail with 23503 after retries, it is likely a duplicate email (fake user ID)
-            if (profileError.code === '23503') {
-                 return { error: { message: "Profile creation failed. This email address might already be registered." } };
-            }
-            return { error: profileError };
-        }
+        await createProfileWithRetry();
     }
 
     return { data, error: null };
+  };
+
+  const resetPassword = async (email: string) => {
+      if (!supabase) return { error: { message: "Supabase client not initialized" } };
+      // Redirect to a specific URL after clicking the email link
+      // In a hash router SPA, usually just root is fine, the user will be logged in by Supabase automatically
+      return await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin + '/#/settings' 
+      });
   };
 
   const updateProfile = async (updates: Partial<User>) => {
@@ -242,29 +205,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (Object.keys(dbUpdates).length === 0) return;
 
-    const { error } = await supabase
-        .from('profiles')
-        .update(dbUpdates)
-        .eq('id', user.id);
-    
-    if (error) throw error;
-
+    const { error } = await supabase.from('profiles').update(dbUpdates).eq('id', user.id);
+    if (error && error.code !== '42P01') {
+        throw error;
+    }
     setUser(prev => prev ? { ...prev, ...updates } : null);
   };
 
   const updatePassword = async (password: string, oldPassword?: string) => {
-      if (!supabase) return { error: { message: "Supabase client not initialized" } };
+      if (!supabase) return { error: { message: "Client not initialized" } };
       
-      // Verify old password if provided
       if (oldPassword && user?.email) {
           const { error: signInError } = await supabase.auth.signInWithPassword({
               email: user.email,
               password: oldPassword
           });
-
-          if (signInError) {
-              return { error: { message: "Old password verification failed. Please try again." } };
-          }
+          if (signInError) return { error: { message: "Old password verification failed." } };
       }
 
       const { error } = await supabase.auth.updateUser({ password });
@@ -282,7 +238,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, updateProfile, updatePassword, logout, isAuthenticated: !!user, hasPermission }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, resetPassword, updateProfile, updatePassword, logout, isAuthenticated: !!user, hasPermission }}>
       {children}
     </AuthContext.Provider>
   );

@@ -7,7 +7,7 @@ import { usePrinter } from '../contexts/PrinterContext';
 
 const Settings: React.FC = () => {
   const { user, logout, updateProfile, updatePassword } = useAuth();
-  const { taxRate, updateTaxRate } = useData();
+  const { taxRate, updateTaxRate, fixInventoryDuplicates } = useData();
   const { language, setLanguage, t } = useLanguage();
   const { connectPrinter, disconnectPrinter, isConnected, device, error: printerError, printTest } = usePrinter();
 
@@ -43,6 +43,10 @@ const Settings: React.FC = () => {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState(false);
 
+  // Maintenance State
+  const [isFixing, setIsFixing] = useState(false);
+  const [fixMessage, setFixMessage] = useState<string | null>(null);
+
   // Sync theme changes
   useEffect(() => {
     if (theme === 'dark') {
@@ -67,6 +71,22 @@ const Settings: React.FC = () => {
       } else {
           setLocalTaxRate(taxRate.toString()); // Revert if invalid
       }
+  };
+
+  // Handle Maintenance
+  const handleDeduplicate = async () => {
+      if (!window.confirm("Are you sure? This will merge all duplicate inventory items into one and cannot be undone.")) return;
+      
+      setIsFixing(true);
+      setFixMessage(null);
+      const result = await fixInventoryDuplicates();
+      
+      if (result.message) {
+          setFixMessage(result.message);
+      } else if (result.error) {
+          setFixMessage("Error: " + result.error.message);
+      }
+      setIsFixing(false);
   };
 
   // Profile Handlers
@@ -399,6 +419,36 @@ const Settings: React.FC = () => {
                               ) : (
                                   <span className="font-bold text-slate-900 dark:text-white bg-gray-100 dark:bg-white/5 px-3 py-1.5 rounded-lg">{taxRate}%</span>
                               )}
+                          </div>
+                      </div>
+                  </div>
+              </section>
+          )}
+
+          {/* Data Maintenance (Admin Only) */}
+          {user?.role === 'admin' && (
+              <section className="bg-white dark:bg-surface-dark rounded-2xl shadow-sm border border-gray-100 dark:border-white/5 overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-100 dark:border-white/5">
+                      <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <span className="material-symbols-outlined text-primary">healing</span>
+                          Data Maintenance
+                      </h3>
+                  </div>
+                  <div className="p-6">
+                      <div className="flex items-center justify-between">
+                          <div>
+                              <p className="text-sm font-bold text-slate-900 dark:text-white">Deduplicate Inventory</p>
+                              <p className="text-xs text-slate-500 dark:text-gray-400">Merge duplicate items by name & unit. Sums up stock.</p>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                              <button 
+                                  onClick={handleDeduplicate}
+                                  disabled={isFixing}
+                                  className="px-4 py-2 rounded-xl bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-bold text-sm hover:bg-amber-200 dark:hover:bg-amber-500/20 transition-colors"
+                              >
+                                  {isFixing ? 'Fixing...' : 'Fix Duplicates'}
+                              </button>
+                              {fixMessage && <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">{fixMessage}</span>}
                           </div>
                       </div>
                   </div>

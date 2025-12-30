@@ -1,11 +1,12 @@
-import React, { useState, useMemo } from 'react';
+
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { generateItemDescription } from '../services/geminiService';
 import { InventoryItem } from '../types';
 import { useData } from '../contexts/DataContext';
 import { useLanguage } from '../contexts/LanguageContext';
 
 const Inventory: React.FC = () => {
-  const { inventory, addInventoryItem, updateInventoryItem, deleteInventoryItem } = useData();
+  const { inventory, addInventoryItem, updateInventoryItem, deleteInventoryItem, categories } = useData();
   const { t } = useLanguage();
   
   // UI State
@@ -14,6 +15,10 @@ const Inventory: React.FC = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isAnimating, setIsAnimating] = useState(false);
   
+  // Real-time Visual Feedback State
+  const [updatedIds, setUpdatedIds] = useState<Set<string>>(new Set());
+  const prevInventoryRef = useRef<InventoryItem[]>(inventory);
+
   // Filters
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [sortOrder, setSortOrder] = useState<'name' | 'stock-asc' | 'stock-desc'>('stock-asc');
@@ -28,6 +33,40 @@ const Inventory: React.FC = () => {
   const [itemMinStock, setItemMinStock] = useState('5');
   const [itemUnit, setItemUnit] = useState('pcs');
   const [itemDescription, setItemDescription] = useState('');
+
+  // --- Real-time Change Detection ---
+  useEffect(() => {
+      const changes = new Set<string>();
+      
+      inventory.forEach(item => {
+          const prev = prevInventoryRef.current.find(p => p.id === item.id);
+          // Detect changes in Stock or Status specifically for visual alerting
+          if (prev && (prev.stock !== item.stock || prev.status !== item.status)) {
+              changes.add(item.id);
+          }
+      });
+
+      if (changes.size > 0) {
+          setUpdatedIds(prev => {
+              const next = new Set(prev);
+              changes.forEach(id => next.add(id));
+              return next;
+          });
+
+          // Remove highlight after 2 seconds
+          const timer = setTimeout(() => {
+              setUpdatedIds(prev => {
+                  const next = new Set(prev);
+                  changes.forEach(id => next.delete(id));
+                  return next;
+              });
+          }, 2000);
+
+          return () => clearTimeout(timer);
+      }
+      
+      prevInventoryRef.current = inventory;
+  }, [inventory]);
 
   // --- Helpers ---
 
@@ -175,13 +214,30 @@ const Inventory: React.FC = () => {
       };
   }, [inventory]);
 
-  const filterChips = [
-      { id: 'all', label: t('inventory.filter_all') },
-      { id: 'low-stock', label: t('inventory.filter_low') },
-      { id: 'food', label: t('inventory.filter_food') },
-      { id: 'drink', label: t('inventory.filter_drink') },
-      { id: 'ingredient', label: t('inventory.filter_ingredient') },
-  ];
+  // Use dynamic categories from DataContext + Static filters
+  const filterChips = useMemo(() => {
+      const staticFilters = [
+          { id: 'all', label: t('inventory.filter_all') },
+          { id: 'low-stock', label: t('inventory.filter_low') }
+      ];
+      
+      // Default standard categories if custom ones aren't mapped yet, or use context categories
+      // We map the category IDs to labels. 
+      // Note: Inventory 'category' field is currently a string, typically matching category IDs.
+      const categoryFilters = categories.map(c => ({ id: c.id, label: c.name }));
+      
+      // Add standard fallbacks if context categories are empty (though DataContext initializes defaults)
+      if (categoryFilters.length === 0) {
+          return [
+              ...staticFilters,
+              { id: 'food', label: t('inventory.filter_food') },
+              { id: 'drink', label: t('inventory.filter_drink') },
+              { id: 'ingredient', label: t('inventory.filter_ingredient') },
+          ];
+      }
+
+      return [...staticFilters, ...categoryFilters];
+  }, [categories, t]);
 
   return (
     <div className="flex flex-col h-full w-full bg-background-light dark:bg-background-dark overflow-hidden relative">
@@ -320,6 +376,7 @@ const Inventory: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {filteredItems.map(item => {
                     const healthPercentage = Math.min(100, (item.stock / (item.minStock * 3)) * 100);
+                    const isUpdated = updatedIds.has(item.id);
                     
                     const statusColor = item.status === 'out-of-stock' ? 'bg-red-500' 
                                       : item.status === 'low-stock' ? 'bg-amber-500' 
@@ -330,7 +387,10 @@ const Inventory: React.FC = () => {
                                            : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400';
                     
                     return (
-                    <div key={item.id} className="group bg-white dark:bg-surface-dark rounded-2xl p-4 shadow-sm hover:shadow-md border border-slate-100 dark:border-white/5 transition-all flex flex-col justify-between h-[200px]">
+                    <div 
+                        key={item.id} 
+                        className={`group bg-white dark:bg-surface-dark rounded-2xl p-4 shadow-sm hover:shadow-md border border-slate-100 dark:border-white/5 transition-all flex flex-col justify-between h-[200px] ${isUpdated ? 'ring-2 ring-primary bg-primary/5' : ''}`}
+                    >
                         
                         {/* Top Row */}
                         <div className="flex justify-between items-start">
@@ -354,7 +414,7 @@ const Inventory: React.FC = () => {
                         {/* Middle: Stock Stats */}
                         <div className="my-2">
                             <div className="flex justify-between items-end mb-1">
-                                <span className="text-3xl font-black text-slate-900 dark:text-white">{item.stock}</span>
+                                <span className={`text-3xl font-black transition-colors duration-300 ${isUpdated ? 'text-primary scale-110' : 'text-slate-900 dark:text-white'}`}>{item.stock}</span>
                                 <span className="text-xs font-bold text-slate-400 mb-1">{item.unit}</span>
                             </div>
                             
@@ -396,11 +456,12 @@ const Inventory: React.FC = () => {
             // LIST VIEW
             <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {filteredItems.map(item => {
+                    const isUpdated = updatedIds.has(item.id);
                     const statusColor = item.status === 'out-of-stock' ? 'text-red-500' : item.status === 'low-stock' ? 'text-amber-500' : 'text-emerald-500';
                     const lightStatusClass = item.status === 'out-of-stock' ? 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400' : item.status === 'low-stock' ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400';
 
                     return (
-                        <div key={item.id} className="flex items-center justify-between bg-white dark:bg-surface-dark p-3 rounded-xl border border-gray-100 dark:border-white/5 shadow-sm hover:border-primary/30 transition-colors group">
+                        <div key={item.id} className={`flex items-center justify-between bg-white dark:bg-surface-dark p-3 rounded-xl border border-gray-100 dark:border-white/5 shadow-sm hover:border-primary/30 transition-all group ${isUpdated ? 'ring-2 ring-primary bg-primary/5' : ''}`}>
                             <div className="flex items-center gap-4 flex-1">
                                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${lightStatusClass}`}>
                                     <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
@@ -418,7 +479,7 @@ const Inventory: React.FC = () => {
 
                             <div className="flex items-center gap-6">
                                 <div className="text-right w-20">
-                                    <p className="font-black text-slate-900 dark:text-white">{item.stock} <span className="text-xs font-normal text-slate-400">{item.unit}</span></p>
+                                    <p className={`font-black text-slate-900 dark:text-white transition-transform ${isUpdated ? 'text-primary scale-110' : ''}`}>{item.stock} <span className="text-xs font-normal text-slate-400">{item.unit}</span></p>
                                     <p className="text-[10px] text-slate-400">Min: {item.minStock}</p>
                                 </div>
                                 
@@ -476,9 +537,17 @@ const Inventory: React.FC = () => {
                                          className="w-full h-11 px-4 rounded-xl bg-gray-50 dark:bg-background-dark border border-gray-200 dark:border-white/5 focus:ring-2 focus:ring-primary dark:text-white transition-all outline-none appearance-none"
                                       >
                                           <option value="">Select...</option>
-                                          <option value="food">Food</option>
-                                          <option value="drink">Drink</option>
-                                          <option value="ingredient">Ingredient</option>
+                                          {categories.map(c => (
+                                              <option key={c.id} value={c.id}>{c.name}</option>
+                                          ))}
+                                          {/* Fallbacks if empty */}
+                                          {categories.length === 0 && (
+                                              <>
+                                                <option value="food">Food</option>
+                                                <option value="drink">Drink</option>
+                                                <option value="ingredient">Ingredient</option>
+                                              </>
+                                          )}
                                       </select>
                                   </div>
                                   <div>

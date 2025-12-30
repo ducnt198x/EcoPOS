@@ -5,7 +5,12 @@ export interface MenuItem {
   image: string;
   category: string;
   description?: string;
+  /**
+   * @deprecated DO NOT USE. Stock is now managed exclusively via the 'inventory' table.
+   * Use 'inventoryId' to link to the correct stock record.
+   */
   stock?: number;
+  inventoryId?: string;
 }
 
 export interface Category {
@@ -67,6 +72,24 @@ export interface Order {
   notes?: string;
 }
 
+/**
+ * DBOrder represents the raw database shape (snake_case).
+ * This acts as a strict contract for writes to the 'orders' table.
+ */
+export interface DBOrder {
+  id: string;
+  customer_name: string;
+  table_name: string;
+  date: string;
+  total: number;
+  status: string;
+  items: any[];
+  payment_method: string;
+  order_type: string;
+  discount: number;
+  notes: string | null;
+}
+
 export interface Transaction {
   id: string;
   table: string;
@@ -84,6 +107,7 @@ export interface User {
   name: string;
   role: Role;
   avatar?: string;
+  password?: string; // Added to sync with profile database
 }
 
 export interface AppSetting {

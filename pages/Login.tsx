@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -9,7 +8,7 @@ import { supabase } from '../services/supabase';
 type AuthMode = 'signin' | 'signup' | 'forgot';
 
 const Login: React.FC = () => {
-  const { signIn, signUp, resetPassword } = useAuth();
+  const { signIn, signUp, resetPassword, loginAsDemo } = useAuth();
   const { t, language, setLanguage } = useLanguage();
   const navigate = useNavigate();
 
@@ -49,7 +48,7 @@ const Login: React.FC = () => {
 
             // If we have a session, we are logged in automatically.
             if (data && data.session) {
-                 navigate('/tables');
+                 navigate('/pos');
             }
         } else if (authMode === 'forgot') {
             const { error } = await resetPassword(email);
@@ -63,34 +62,61 @@ const Login: React.FC = () => {
 
             // Determine routing based on role
             if (data?.user && supabase) {
-                const { data: profile } = await supabase
-                    .from('profiles')
-                    .select('role')
-                    .eq('id', data.user.id)
-                    .single();
+                // Determine user role if possible from profile or metadata
+                let userRole = '';
                 
-                if (profile?.role === 'admin') {
+                // Try profile first (async might be tricky here, relies on AuthContext having fetched it, 
+                // but direct DB query is safer for immediate routing decision)
+                try {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('role')
+                        .eq('id', data.user.id)
+                        .single();
+                    userRole = (profile?.role || '').toLowerCase();
+                } catch (e) {
+                    // Fallback to metadata if DB read fails (rare)
+                    const meta = data.user.user_metadata || {};
+                    userRole = (meta.role || '').toLowerCase();
+                }
+
+                if (userRole === 'admin') {
                     navigate('/admin-dashboard');
                 } else {
-                    navigate('/tables');
+                    navigate('/pos');
                 }
             } else {
-                navigate('/tables');
+                // Fallback navigation (e.g. demo mode interception)
+                navigate('/pos');
             }
         }
     } catch (err: any) {
-        console.error(err);
-        // Specific handling for Email not confirmed error
-        if (err.message && err.message.includes("Email not confirmed")) {
-            setAlert({ type: 'error', message: "Email not confirmed. Please check your inbox." });
-        } else if (err.message && (err.message.includes("Invalid login credentials") || err.message.includes("client not initialized"))) {
-            setAlert({ type: 'error', message: "Login failed. Please check your email and password." });
+        console.error("Login Error:", err);
+        const msg = err.message || "An error occurred";
+        
+        // Specific handling for common errors
+        if (msg.includes("Email not confirmed")) {
+            setAlert({ type: 'error', message: "Email address not confirmed. Please check your inbox for the verification link." });
+        } else if (msg.includes("Invalid login credentials")) {
+            setAlert({ type: 'error', message: "Invalid email or password. Please try again." });
+        } else if (msg.includes("client not initialized")) {
+            setAlert({ type: 'error', message: "System error: Database connection failed." });
         } else {
-            setAlert({ type: 'error', message: err.message || "An error occurred" });
+            setAlert({ type: 'error', message: msg });
         }
     } finally {
         setLoading(false);
     }
+  };
+
+  const handleDemoLogin = async () => {
+      setAlert(null);
+      try {
+          await loginAsDemo();
+          navigate('/pos');
+      } catch (e) {
+          setAlert({ type: 'error', message: "Could not start demo mode." });
+      }
   };
 
   const handleModeChange = (mode: AuthMode) => {
@@ -276,6 +302,26 @@ const Login: React.FC = () => {
                      {authMode === 'signup' ? t('login.create_account') : authMode === 'forgot' ? "Send Reset Link" : t('login.signin')}
                   </button>
               </div>
+
+              {authMode === 'signin' && (
+                  <>
+                      <div className="relative flex py-2 items-center">
+                          <div className="flex-grow border-t border-gray-200 dark:border-white/10"></div>
+                          <span className="flex-shrink-0 mx-4 text-gray-400 text-xs uppercase font-bold">Or continue with</span>
+                          <div className="flex-grow border-t border-gray-200 dark:border-white/10"></div>
+                      </div>
+
+                      <button 
+                          type="button"
+                          onClick={handleDemoLogin}
+                          disabled={loading}
+                          className="w-full h-12 bg-white dark:bg-white/5 border-2 border-dashed border-gray-300 dark:border-gray-600 text-slate-600 dark:text-gray-300 font-bold rounded-xl hover:border-primary hover:text-primary dark:hover:border-primary dark:hover:text-primary transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                      >
+                          <span className="material-symbols-outlined">smart_toy</span>
+                          Demo Account
+                      </button>
+                  </>
+              )}
            </form>
 
            <div className="mt-8 text-center space-y-3">

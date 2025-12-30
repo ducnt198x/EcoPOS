@@ -16,8 +16,6 @@ const POS: React.FC = () => {
       updateActiveOrder, 
       tables, 
       inventory, 
-      updateInventoryItem,
-      addInventoryItem,
       updateMenuItem, 
       addMenuItem, 
       deleteMenuItem, 
@@ -50,9 +48,20 @@ const POS: React.FC = () => {
       ...categories
   ];
 
+  // Common Icons for Category Picker
+  const commonIcons = [
+    'restaurant', 'restaurant_menu', 'lunch_dining', 'ramen_dining', 
+    'rice_bowl', 'fastfood', 'pizza', 'bakery_dining', 
+    'local_cafe', 'local_bar', 'liquor', 'icecream', 
+    'cake', 'nutrition', 'soup_kitchen', 'set_meal'
+  ];
+
   // Drag and Drop Refs
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
+  
+  // File Upload Ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Ensure selectedTableId matches an existing table, otherwise fallback
   useEffect(() => {
@@ -99,12 +108,83 @@ const POS: React.FC = () => {
   // Stock Alert State
   const [stockAlert, setStockAlert] = useState<{ message: string; type: 'warning' | 'error' | 'success' } | null>(null);
 
+  // Real-time Visuals State
+  const [updatedMenuItemIds, setUpdatedMenuItemIds] = useState<Set<string>>(new Set());
+  const prevMenuItemsRef = useRef<MenuItem[]>(menuItems);
+  
+  const [updatedCartIndices, setUpdatedCartIndices] = useState<Set<number>>(new Set());
+  const prevCartRef = useRef<CartItem[]>(cart);
+
+  // Effect to clear alert
   useEffect(() => {
     if (stockAlert) {
       const timer = setTimeout(() => setStockAlert(null), 3000);
       return () => clearTimeout(timer);
     }
   }, [stockAlert]);
+
+  // Effect: Detect Menu Changes
+  useEffect(() => {
+      const changes = new Set<string>();
+      menuItems.forEach(item => {
+          const prev = prevMenuItemsRef.current.find(p => p.id === item.id);
+          // Highlight if price, name, image, or category changes (remote update)
+          if (prev && (prev.price !== item.price || prev.name !== item.name || prev.image !== item.image || prev.category !== item.category)) {
+              changes.add(item.id);
+          }
+      });
+      
+      if (changes.size > 0) {
+          setUpdatedMenuItemIds(prev => {
+              const next = new Set(prev);
+              changes.forEach(id => next.add(id));
+              return next;
+          });
+          setTimeout(() => {
+              setUpdatedMenuItemIds(prev => {
+                  const next = new Set(prev);
+                  changes.forEach(id => next.delete(id));
+                  return next;
+              });
+          }, 2000);
+      }
+      prevMenuItemsRef.current = menuItems;
+  }, [menuItems]);
+
+  // Effect: Detect Cart Changes (Remote or Local)
+  useEffect(() => {
+      const changes = new Set<number>();
+      // Check length diff (Add/Remove)
+      if (cart.length > prevCartRef.current.length) {
+          // Highlight new items (added at end)
+          for (let i = prevCartRef.current.length; i < cart.length; i++) {
+              changes.add(i);
+          }
+      }
+      // Check updates (Quantity/Notes)
+      cart.forEach((item, i) => {
+          const prev = prevCartRef.current[i];
+          if (prev && (prev.quantity !== item.quantity || prev.notes !== item.notes)) {
+              changes.add(i);
+          }
+      });
+
+      if (changes.size > 0) {
+          setUpdatedCartIndices(prev => {
+              const next = new Set(prev);
+              changes.forEach(id => next.add(id));
+              return next;
+          });
+          setTimeout(() => {
+              setUpdatedCartIndices(prev => {
+                  const next = new Set(prev);
+                  changes.forEach(id => next.delete(id));
+                  return next;
+              });
+          }, 2000);
+      }
+      prevCartRef.current = cart;
+  }, [cart]);
 
   // Helper: Generate robust IDs
   const generateId = () => {
@@ -121,8 +201,6 @@ const POS: React.FC = () => {
     return matchesCategory && matchesSearch;
   });
 
-  const filteredCart = cart.filter(item => item.name.toLowerCase().includes(cartSearch.toLowerCase()));
-
   const updateCart = (newCart: CartItem[]) => {
       updateActiveOrder(selectedTableId, newCart);
   };
@@ -134,23 +212,23 @@ const POS: React.FC = () => {
 
   // Helper to get real-time stock from Inventory
   const getInventoryItem = (menuItem: MenuItem): InventoryItem | undefined => {
-      return inventory.find(i => i.name === menuItem.name);
+      if (menuItem.inventoryId) {
+          return inventory.find(i => i.id === menuItem.inventoryId);
+      }
+      return inventory.find(i => i.name.toLowerCase() === menuItem.name.toLowerCase());
   };
 
   // Calculates stock available relative to what is ALREADY in the specific table's cart
   const getAvailableStock = (menuItem: MenuItem) => {
-      // Prioritize Menu Item specific stock if it exists, otherwise check inventory, otherwise assume unlimited
-      let stock = menuItem.stock;
-      if (stock === undefined) {
-         const invItem = getInventoryItem(menuItem);
-         stock = invItem ? invItem.stock : 9999;
-      }
+      const invItem = getInventoryItem(menuItem);
+      // Priority: Inventory Table (Realtime Source) > Menu Item Prop (Local/Cached) > Default
+      const stock = invItem ? invItem.stock : (menuItem.stock !== undefined ? menuItem.stock : 9999);
       
       const inCart = getItemTotalInCart(menuItem.name);
       return Math.max(0, stock - inCart);
   };
 
-  // Real-time stock check effect
+  // Real-time stock check effect inside modal
   useEffect(() => {
       if (isModalOpen && selectedItem) {
           const available = getAvailableStock(selectedItem);
@@ -160,7 +238,7 @@ const POS: React.FC = () => {
               setStockAlert({ message: `${selectedItem.name} just went out of stock!`, type: 'error' });
           } else if (itemQuantity > available) {
               setItemQuantity(available);
-              setStockAlert({ message: `Stock limited. Quantity adjusted to ${available}.`, type: 'warning' });
+              setStockAlert({ message: `Stock updated. Max quantity is now ${available}.`, type: 'warning' });
           }
       }
   }, [inventory, activeOrders, selectedItem, isModalOpen, menuItems]);
@@ -220,7 +298,10 @@ const POS: React.FC = () => {
           setEditFormCategory(item.category);
           setEditFormImage(item.image);
           setEditFormDescription(item.description || '');
-          setEditFormStock(item.stock !== undefined ? item.stock.toString() : '');
+          
+          const invItem = getInventoryItem(item);
+          const stockVal = invItem ? invItem.stock : (item.stock !== undefined ? item.stock : 20);
+          setEditFormStock(stockVal.toString());
           
           // Pre-fill inventory category if linked item exists
           const linkedInv = inventory.find(i => i.name.toLowerCase() === item.name.toLowerCase());
@@ -238,6 +319,26 @@ const POS: React.FC = () => {
       setIsEditItemModalOpen(true);
   };
 
+  // Handle local image file selection
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          // Check file size (limit to 2MB to prevent DB bloat if using base64)
+          if (file.size > 2 * 1024 * 1024) {
+              setStockAlert({ message: 'Image too large. Max 2MB.', type: 'error' });
+              return;
+          }
+
+          const reader = new FileReader();
+          reader.onloadend = () => {
+              // Convert to Base64
+              const base64String = reader.result as string;
+              setEditFormImage(base64String);
+          };
+          reader.readAsDataURL(file);
+      }
+  };
+
   const handleSaveMenuItem = async () => {
       if (!editFormName || !editFormPrice) return;
 
@@ -253,33 +354,51 @@ const POS: React.FC = () => {
           category: editFormCategory,
           image,
           description: editFormDescription,
-          stock
+          stock,
+          // Preserve existing inventoryId if editing
+          inventoryId: editFormId ? menuItems.find(m => m.id === editFormId)?.inventoryId : undefined
       };
 
       // Pass the inventory category to DataContext functions.
       // The context will handle syncing inventory creation/update, name changes, and stock.
+      let result;
       if (editFormId) {
-          await updateMenuItem(itemData, editFormInvCategory);
+          result = await updateMenuItem(itemData, editFormInvCategory);
       } else {
-          await addMenuItem(itemData, editFormInvCategory);
+          result = await addMenuItem(itemData, editFormInvCategory);
       }
 
-      setStockAlert({ message: editFormId ? 'Item updated & synced' : 'Item added & synced to inventory', type: 'success' });
-      setIsEditItemModalOpen(false);
+      if (!result?.error) {
+          setStockAlert({ 
+              message: editFormId ? t('pos.item_updated') : t('pos.item_added'), 
+              type: 'success' 
+          });
+          setIsEditItemModalOpen(false);
+      } else {
+          setStockAlert({ message: 'Operation failed', type: 'error' });
+      }
   };
 
-  const handleDeleteMenuItem = (id: string) => {
-      if (window.confirm('Are you sure you want to delete this item? This will also remove the linked inventory.')) {
-          deleteMenuItem(id);
+  const handleDeleteMenuItem = async (id: string) => {
+      if (window.confirm(t('pos.delete_confirm'))) {
+          const result = await deleteMenuItem(id);
+          if (!result?.error) {
+              setStockAlert({ message: t('pos.item_deleted'), type: 'success' });
+          } else {
+              setStockAlert({ message: 'Delete failed', type: 'error' });
+          }
       }
   };
 
   const handleQuickStockUpdate = (e: React.MouseEvent, item: MenuItem, delta: number) => {
       e.stopPropagation();
-      const currentStock = item.stock || 0;
-      const newStock = Math.max(0, currentStock + delta);
-      // We don't pass inventory category here as it's a quick update, just syncs numbers
-      updateMenuItem({ ...item, stock: newStock });
+      // Only allow quick stock update via Menu Edit Mode if it's a simple stock update
+      // This will technically call updateMenuItem, which will NOT sync to inventory unless we change logic
+      // But we removed sync. So this button is now potentially misleading if stock is managed via inventory.
+      
+      // Better approach: Warn user or direct to Inventory.
+      // Or implement a quick inventory update here.
+      setStockAlert({ message: "Manage stock in Inventory tab", type: 'warning' });
   };
 
   // --- Category Management Handlers (Admin Only) ---
@@ -292,11 +411,14 @@ const POS: React.FC = () => {
       setIsCategoryModalOpen(true);
   };
 
-  const handleEditCategory = (cat: Category) => {
+  const handleEditCategory = (e: React.MouseEvent, cat: Category) => {
+      e.stopPropagation();
+      e.preventDefault();
       setCatEditingId(cat.id);
       setCatFormId(cat.id);
       setCatFormName(cat.name);
       setCatFormIcon(cat.icon);
+      setIsCategoryModalOpen(true);
   };
 
   const handleSaveCategory = async () => {
@@ -334,16 +456,32 @@ const POS: React.FC = () => {
       if (result?.error) {
           setStockAlert({ message: 'Operation failed. Check console for details.', type: 'error' });
       } else {
-          // Reset form only on success
-          setCatEditingId(null);
-          setCatFormId('');
-          setCatFormName('');
-          setCatFormIcon('');
+          // Reset form only on success if adding new
+          if (!catEditingId) {
+              setCatFormId('');
+              setCatFormName('');
+              setCatFormIcon('');
+          } else {
+              setIsCategoryModalOpen(false);
+          }
       }
   };
 
-  const handleDeleteCategory = async (id: string) => {
-      if (window.confirm('Are you sure? Items in this category will remain but may be hidden from filters.')) {
+  const handleDeleteCategory = async (e: React.MouseEvent, id: string) => {
+      e.stopPropagation();
+      e.preventDefault();
+      
+      // Prevent deleting if category is in use
+      const itemsInCat = menuItems.filter(item => item.category === id);
+      if (itemsInCat.length > 0) {
+          setStockAlert({ 
+              message: `Cannot delete category. It contains ${itemsInCat.length} items.`, 
+              type: 'error' 
+          });
+          return;
+      }
+
+      if (window.confirm('Are you sure you want to delete this category?')) {
           const result = await deleteCategory(id);
           if (result?.error) {
               setStockAlert({ message: 'Failed to delete category', type: 'error' });
@@ -440,8 +578,12 @@ const POS: React.FC = () => {
       for (const item of cart) {
         const menuItem = menuItems.find(m => m.id === item.id);
         if (menuItem) {
-            const stock = menuItem.stock !== undefined ? menuItem.stock : (getInventoryItem(menuItem)?.stock || 9999);
-            if (stock < getItemTotalInCart(item.name)) {
+            // Using logic consistent with getAvailableStock
+            const invItem = getInventoryItem(menuItem);
+            const stock = invItem ? invItem.stock : (menuItem.stock !== undefined ? menuItem.stock : 9999);
+            const totalRequested = getItemTotalInCart(item.name);
+
+            if (stock < totalRequested) {
                 setStockAlert({ 
                     message: `Not enough stock for ${item.name}. Available: ${stock}`, 
                     type: 'error' 
@@ -469,7 +611,8 @@ const POS: React.FC = () => {
 
   // Helper for UI Badges on Menu Cards
   const getStockStatus = (menuItem: MenuItem) => {
-      const stock = menuItem.stock !== undefined ? menuItem.stock : (getInventoryItem(menuItem)?.stock || 9999);
+      const invItem = getInventoryItem(menuItem);
+      const stock = invItem ? invItem.stock : (menuItem.stock !== undefined ? menuItem.stock : 9999);
       const available = getAvailableStock(menuItem);
 
       if (stock === 0) {
@@ -620,9 +763,11 @@ const POS: React.FC = () => {
                 {filteredItems.map(item => {
                     const status = getStockStatus(item);
                     const available = getAvailableStock(item);
-                    const stock = item.stock !== undefined ? item.stock : (getInventoryItem(item)?.stock || 0);
-                    const isFullyOutOfStock = stock === 0;
+                    // Use robust stock check for UI
+                    const invItem = getInventoryItem(item);
+                    const stock = invItem ? invItem.stock : (item.stock !== undefined ? item.stock : 9999);
                     const isMaxedOut = available <= 0;
+                    const isUpdated = updatedMenuItemIds.has(item.id);
 
                     return (
                     <div 
@@ -630,6 +775,7 @@ const POS: React.FC = () => {
                         onClick={() => !isEditMode && !isMaxedOut && handleItemClick(item)} 
                         className={`relative group bg-white dark:bg-surface-dark rounded-2xl p-3 flex flex-col gap-3 shadow-sm transition-all border border-transparent ${
                             isEditMode ? 'ring-2 ring-transparent hover:ring-amber-400' :
+                            isUpdated ? 'ring-2 ring-primary bg-primary/5' :
                             isMaxedOut ? 'opacity-70 grayscale-[0.5] border-gray-100 dark:border-white/5' : 'hover:shadow-md cursor-pointer hover:border-primary/30'
                         }`}
                     >
@@ -683,20 +829,16 @@ const POS: React.FC = () => {
                         </div>
                         
                         <div>
-                            <h4 className="text-sm font-bold text-slate-900 dark:text-white leading-tight mb-1 truncate">{item.name}</h4>
+                            <h4 className={`text-sm font-bold text-slate-900 dark:text-white leading-tight mb-1 truncate ${isUpdated ? 'text-primary' : ''}`}>{item.name}</h4>
                             <div className="flex justify-between items-center">
-                                <p className="text-primary font-bold text-base">{item.price.toLocaleString()}₫</p>
+                                <p className={`text-primary font-bold text-base ${isUpdated ? 'scale-110' : ''}`}>{item.price.toLocaleString()}₫</p>
                             </div>
                             
                             {/* Edit Mode Stock Controls */}
                             {isEditMode && (
-                                <div className="mt-3 bg-gray-100 dark:bg-black/20 rounded-lg p-1 flex items-center justify-between">
-                                    <button onClick={(e) => handleQuickStockUpdate(e, item, -1)} className="w-8 h-8 rounded-md bg-white dark:bg-white/10 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-500/20 text-slate-600 dark:text-gray-300">
-                                        <span className="material-symbols-outlined text-[16px]">remove</span>
-                                    </button>
-                                    <span className="font-bold text-sm text-slate-700 dark:text-white">{stock}</span>
-                                    <button onClick={(e) => handleQuickStockUpdate(e, item, 1)} className="w-8 h-8 rounded-md bg-white dark:bg-white/10 flex items-center justify-center hover:bg-emerald-50 dark:hover:bg-emerald-500/20 text-slate-600 dark:text-gray-300">
-                                        <span className="material-symbols-outlined text-[16px]">add</span>
+                                <div className="mt-3 bg-gray-100 dark:bg-black/20 rounded-lg p-1 flex items-center justify-center">
+                                    <button onClick={(e) => handleQuickStockUpdate(e, item, 0)} className="w-full px-2 py-1 rounded bg-white dark:bg-white/10 text-xs font-bold text-slate-600 dark:text-gray-300 hover:bg-primary/20 hover:text-primary">
+                                        Manage Stock in Inventory
                                     </button>
                                 </div>
                             )}
@@ -789,8 +931,10 @@ const POS: React.FC = () => {
                      <p className="font-bold">{t('pos.cart_empty')}</p>
                  </div>
              ) : (
-                 cart.map((item, index) => (
-                     <div key={`${item.id}-${index}`} className="flex justify-between items-start animate-in slide-in-from-right-2 fade-in duration-300">
+                 cart.map((item, index) => {
+                     const isCartUpdated = updatedCartIndices.has(index);
+                     return (
+                     <div key={`${item.id}-${index}`} className={`flex justify-between items-start animate-in slide-in-from-right-2 fade-in duration-300 transition-colors rounded-xl p-2 -mx-2 ${isCartUpdated ? 'bg-primary/10' : ''}`}>
                          <div className="flex-1">
                              <div className="flex justify-between items-start mb-1">
                                  <p className="font-bold text-slate-800 dark:text-white text-sm">{item.name}</p>
@@ -818,7 +962,7 @@ const POS: React.FC = () => {
                              </div>
                          </div>
                      </div>
-                 ))
+                 )})
              )}
          </div>
 
@@ -876,7 +1020,9 @@ const POS: React.FC = () => {
                       <div>
                           <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-1">{selectedItem.name}</h3>
                           <p className="text-primary font-bold text-lg">{selectedItem.price.toLocaleString()} ₫</p>
-                          <p className="text-sm text-gray-500 mt-2">{t('pos.modal_stock_avail')}: {getAvailableStock(selectedItem)}</p>
+                          <p className={`text-sm mt-2 font-bold ${getAvailableStock(selectedItem) <= 5 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                              {t('pos.modal_stock_avail')}: {getAvailableStock(selectedItem)}
+                          </p>
                       </div>
                   </div>
 
@@ -1044,8 +1190,25 @@ const POS: React.FC = () => {
                           </div>
                       </div>
                       <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Image URL</label>
-                          <input className="w-full h-11 px-4 rounded-xl bg-gray-50 dark:bg-black/20 border-none dark:text-white" value={editFormImage} onChange={e => setEditFormImage(e.target.value)} placeholder="https://..." />
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Image URL or Upload</label>
+                          <div className="flex gap-2">
+                              <input className="flex-1 h-11 px-4 rounded-xl bg-gray-50 dark:bg-black/20 border-none dark:text-white" value={editFormImage} onChange={e => setEditFormImage(e.target.value)} placeholder="https://..." />
+                              <button 
+                                type="button" 
+                                onClick={() => fileInputRef.current?.click()} 
+                                className="px-3 rounded-xl bg-gray-100 dark:bg-white/10 hover:bg-gray-200 dark:hover:bg-white/20 transition-colors flex items-center justify-center"
+                                title="Upload Image"
+                              >
+                                  <span className="material-symbols-outlined text-slate-500 dark:text-white">upload_file</span>
+                              </button>
+                              <input 
+                                  type="file" 
+                                  ref={fileInputRef} 
+                                  className="hidden" 
+                                  accept="image/*" 
+                                  onChange={handleFileSelect} 
+                              />
+                          </div>
                       </div>
                       <div>
                           <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Description</label>
@@ -1093,9 +1256,28 @@ const POS: React.FC = () => {
                                   {catFormIcon ? <span className="material-symbols-outlined text-gray-600 dark:text-gray-300">{catFormIcon}</span> : <span className="material-symbols-outlined text-gray-300">image</span>}
                               </div>
                           </div>
-                          <div className="flex justify-end gap-2 pt-2">
+                          
+                          {/* Quick Icon Picker */}
+                          <div>
+                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Quick Icons</p>
+                              <div className="grid grid-cols-8 gap-2">
+                                  {commonIcons.map(icon => (
+                                      <button 
+                                          key={icon}
+                                          type="button"
+                                          onClick={() => setCatFormIcon(icon)}
+                                          className={`aspect-square rounded-lg flex items-center justify-center transition-all ${catFormIcon === icon ? 'bg-primary text-background-dark shadow-sm scale-110' : 'bg-white dark:bg-white/10 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/20'}`}
+                                          title={icon}
+                                      >
+                                          <span className="material-symbols-outlined text-[18px]">{icon}</span>
+                                      </button>
+                                  ))}
+                              </div>
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-2 mt-2 border-t border-gray-200 dark:border-white/5">
                               {catEditingId && <button onClick={() => { setCatEditingId(null); setCatFormId(''); setCatFormName(''); setCatFormIcon(''); }} className="px-3 py-1.5 text-xs font-bold text-gray-500">Cancel</button>}
-                              <button onClick={handleSaveCategory} disabled={isSavingCategory} className="px-4 py-2 bg-primary text-background-dark rounded-lg text-sm font-bold shadow-sm">{isSavingCategory ? 'Saving...' : (catEditingId ? 'Update' : 'Add')}</button>
+                              <button onClick={handleSaveCategory} disabled={isSavingCategory} className="px-4 py-2 bg-primary text-background-dark rounded-lg text-sm font-bold shadow-sm hover:opacity-90">{isSavingCategory ? 'Saving...' : (catEditingId ? 'Update' : 'Add')}</button>
                           </div>
                       </div>
                   </div>
@@ -1123,8 +1305,22 @@ const POS: React.FC = () => {
                                   </div>
                               </div>
                               <div className="flex gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button onClick={() => handleEditCategory(cat)} className="p-1.5 text-gray-500 hover:text-primary"><span className="material-symbols-outlined text-[18px]">edit</span></button>
-                                  <button onClick={() => handleDeleteCategory(cat.id)} className="p-1.5 text-gray-500 hover:text-red-500"><span className="material-symbols-outlined text-[18px]">delete</span></button>
+                                  <button 
+                                    type="button"
+                                    onClick={(e) => handleEditCategory(e, cat)} 
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    className="p-1.5 text-gray-500 hover:text-primary"
+                                  >
+                                      <span className="material-symbols-outlined text-[18px]">edit</span>
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={(e) => handleDeleteCategory(e, cat.id)} 
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    className="p-1.5 text-gray-500 hover:text-red-500"
+                                  >
+                                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                                  </button>
                               </div>
                           </div>
                       ))}

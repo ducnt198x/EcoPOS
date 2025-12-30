@@ -29,8 +29,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   }
 
   const navItems: NavItem[] = [
-    { path: '/tables', icon: 'table_restaurant', label: t('nav.tables'), roles: ['admin', 'manager', 'cashier'] },
     { path: '/pos', icon: 'point_of_sale', label: t('nav.menu'), roles: ['admin', 'manager', 'cashier'] },
+    { path: '/tables', icon: 'table_restaurant', label: t('nav.tables'), roles: ['admin', 'manager', 'cashier'] },
     { path: '/order-history', icon: 'receipt_long', label: t('nav.history'), roles: ['admin', 'manager'] },
     { path: '/inventory', icon: 'inventory_2', label: t('nav.inventory'), roles: ['admin', 'manager'] },
     { path: '/reports', icon: 'bar_chart', label: t('nav.reports'), roles: ['admin'] },

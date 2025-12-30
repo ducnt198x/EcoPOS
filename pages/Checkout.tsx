@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
@@ -10,7 +9,7 @@ const Checkout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useLanguage();
-  const { activeOrders, tables, addOrder, updateTable, clearActiveOrder, inventory, updateInventoryItem, menuItems, updateMenuItem, taxRate: globalTaxRate } = useData();
+  const { activeOrders, tables, addOrder, updateTable, clearActiveOrder, inventory, updateInventoryItem, taxRate: globalTaxRate } = useData();
   const { isConnected, printOrder } = usePrinter();
   
   // Get data passed from POS
@@ -61,11 +60,15 @@ const Checkout: React.FC = () => {
         await addOrder(newOrder);
         setLastOrder(newOrder);
 
-        // Deduct Inventory in Supabase (Sequential for safety)
+        // Deduct Inventory in Supabase
         for (const cartItem of cart) {
-            // 1. Update Inventory Table (Context will auto-sync Menu Item Table)
-            // Using name match for now as simple link, in real app use FK
-            const invItem = inventory.find(i => i.name.toLowerCase() === cartItem.name.toLowerCase());
+            // 1. Try Link by ID
+            let invItem = inventory.find(i => i.id === cartItem.inventoryId);
+            
+            // 2. Fallback Link by Name
+            if (!invItem) {
+                invItem = inventory.find(i => i.name.toLowerCase() === cartItem.name.toLowerCase());
+            }
             
             if (invItem) {
                 const newStock = Math.max(0, invItem.stock - cartItem.quantity);
@@ -74,17 +77,8 @@ const Checkout: React.FC = () => {
                     stock: newStock,
                     status: newStock <= invItem.minStock ? 'low-stock' : 'in-stock'
                 });
-            } else {
-                // Fallback: If no inventory item, check if menu item handles stock directly
-                // (Only update menu item if it wasn't already updated via inventory link)
-                const menuItem = menuItems.find(m => m.id === cartItem.id);
-                if (menuItem && menuItem.stock !== undefined) {
-                    await updateMenuItem({
-                        ...menuItem,
-                        stock: Math.max(0, menuItem.stock - cartItem.quantity)
-                    });
-                }
             }
+            // Removed redundant fallback update to menuItems.stock
         }
 
         // Clear Table Status if it was dine-in

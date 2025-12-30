@@ -536,19 +536,40 @@ const Tables: React.FC = () => {
                 onClick={() => navigate('/checkout', { state: { tableId: selectedTable.id } })} 
                 disabled={selectedTable.status === 'available'}
               />
+              
+              {/* Dynamic Action Button based on Status */}
+              {selectedTable.status === 'occupied' && (
+                   <ActionButton 
+                     icon="dirty_lens" // Icon representing dirty/mess
+                     label={t('tables.status_dirty')} 
+                     color="bg-amber-500"
+                     onClick={() => updateTableStatusLocal(selectedTable.id, 'dirty')} 
+                   />
+              )}
+              {selectedTable.status === 'dirty' && (
+                   <ActionButton 
+                     icon="cleaning_services" 
+                     label={t('tables.action_clean')} 
+                     color="bg-emerald-500"
+                     onClick={() => updateTableStatusLocal(selectedTable.id, 'available')} 
+                   />
+              )}
+              {selectedTable.status === 'available' && (
+                   <ActionButton 
+                     icon="person_add" 
+                     label={t('tables.action_occupy')} 
+                     color="bg-rose-500"
+                     onClick={() => updateTableStatusLocal(selectedTable.id, 'occupied')} 
+                   />
+              )}
+
+              {/* Force Reset / Cancel Button */}
               <ActionButton 
-                icon="cleaning_services" 
-                label={t('tables.action_clean')} 
-                color="bg-amber-500"
-                active={selectedTable.status === 'dirty'} 
-                onClick={() => updateTableStatusLocal(selectedTable.id, 'available')}
-              />
-              <ActionButton 
-                icon="block" 
-                label={t('tables.action_occupy')} 
-                color="bg-rose-500"
-                active={selectedTable.status === 'occupied'}
-                onClick={() => updateTableStatusLocal(selectedTable.id, 'occupied')} 
+                icon="restart_alt" 
+                label="Reset" 
+                color="bg-gray-500"
+                onClick={() => updateTableStatusLocal(selectedTable.id, 'available')} 
+                disabled={selectedTable.status === 'available'}
               />
            </div>
 
@@ -647,7 +668,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({ icon, label, active, color 
         className={`flex flex-col items-center gap-2 group ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
     >
     <div className={`size-14 rounded-2xl flex items-center justify-center transition-all shadow-sm group-active:scale-95 ${
-        active 
+        active || (color && !disabled && !active)
         ? `${color} text-white shadow-lg` 
         : 'bg-gray-50 dark:bg-white/5 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'
     }`}>

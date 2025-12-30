@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
@@ -35,9 +34,17 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles: Role[]
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (user && !allowedRoles.includes(user.role)) {
-    // Redirect to a safe page if authorized but wrong role, or just home
-    return <Navigate to="/tables" replace />; 
+  if (user) {
+      // If user is admin, allow access to everything
+      if (user.role === 'admin') {
+          return <>{children}</>;
+      }
+      
+      // Otherwise check allowed roles
+      if (!allowedRoles.includes(user.role)) {
+          // Redirect to a safe page if authorized but wrong role
+          return <Navigate to="/pos" replace />; 
+      }
   }
 
   return <>{children}</>;

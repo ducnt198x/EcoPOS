@@ -19,7 +19,7 @@ const AdminDashboard: React.FC = () => {
         <div className="grid md:grid-cols-2 gap-6">
             {/* Option 1: Main App */}
             <div 
-                onClick={() => navigate('/tables')}
+                onClick={() => navigate('/pos')}
                 className="group relative bg-white dark:bg-surface-dark p-8 rounded-3xl border border-gray-200 dark:border-white/5 shadow-xl hover:shadow-2xl transition-all cursor-pointer overflow-hidden"
             >
                 <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:bg-primary/20 transition-all"></div>

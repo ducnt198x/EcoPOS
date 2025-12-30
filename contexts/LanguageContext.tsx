@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 
 type Language = 'en' | 'vi' | 'fr';
@@ -137,6 +138,10 @@ const translations: Record<Language, Record<string, string>> = {
     "pos.modal_add": "Add to Order",
     "pos.modal_special": "Special Instructions",
     "pos.modal_stock_avail": "Stock available",
+    "pos.item_added": "Menu item added successfully",
+    "pos.item_updated": "Menu item updated successfully",
+    "pos.item_deleted": "Menu item deleted successfully",
+    "pos.delete_confirm": "Are you sure you want to delete this menu item?",
 
     // Inventory
     "inventory.title": "Inventory",
@@ -372,6 +377,10 @@ const translations: Record<Language, Record<string, string>> = {
     "pos.modal_add": "Thêm vào đơn",
     "pos.modal_special": "Ghi chú đặc biệt",
     "pos.modal_stock_avail": "Tồn kho khả dụng",
+    "pos.item_added": "Thêm món thành công",
+    "pos.item_updated": "Cập nhật món thành công",
+    "pos.item_deleted": "Xóa món thành công",
+    "pos.delete_confirm": "Bạn có chắc chắn muốn xóa món này?",
 
     // Inventory
     "inventory.title": "Kho hàng",
@@ -607,6 +616,10 @@ const translations: Record<Language, Record<string, string>> = {
     "pos.modal_add": "Ajouter",
     "pos.modal_special": "Instructions spéciales",
     "pos.modal_stock_avail": "Stock disponible",
+    "pos.item_added": "Article ajouté avec succès",
+    "pos.item_updated": "Article mis à jour avec succès",
+    "pos.item_deleted": "Article supprimé avec succès",
+    "pos.delete_confirm": "Êtes-vous sûr de vouloir supprimer cet article ?",
 
     // Inventory
     "inventory.title": "Inventaire",

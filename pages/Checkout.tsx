@@ -50,7 +50,12 @@ const Checkout: React.FC = () => {
             date: new Date().toISOString(),
             total: total,
             status: 'completed',
-            items: cart.map(i => ({ name: i.name, quantity: i.quantity })),
+            items: cart.map(i => ({ 
+                name: i.name, 
+                quantity: i.quantity,
+                price: i.price,
+                notes: i.notes 
+            })),
             paymentMethod: paymentMethod,
             orderType: orderType,
             discount: discount,

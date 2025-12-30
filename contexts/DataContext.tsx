@@ -68,7 +68,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const [orders, setOrders] = useState<Order[]>([]);
     const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
     const [activeOrders, setActiveOrders] = useState<Record<string, CartItem[]>>({});
-    const [taxRate, setTaxRate] = useState<number>(10);
+    const [taxRate, setTaxRate] = useState<number>(0);
 
     useEffect(() => {
         if (!supabase) return;

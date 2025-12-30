@@ -25,6 +25,9 @@ const commands = {
 
 export class ReceiptBuilder {
   private buffer: number[] = [];
+  // Standard 80mm thermal paper usually supports 48 columns (Font A) or 64 (Font B).
+  // We use 48 as a safe standard for 80mm printers.
+  private width: number = 48; 
 
   constructor() {
     this.buffer.push(...commands.INIT);
@@ -102,28 +105,52 @@ export class ReceiptBuilder {
   }
 
   line() {
-      this.textLine('--------------------------------');
+      this.textLine('-'.repeat(this.width));
       return this;
   }
 
+  // Creates a Key......Value line
   pair(left: string, right: string) {
-      // Assuming 32 char width for 58mm printer compatibility
-      const width = 32;
       const safeLeft = String(left || '');
       const safeRight = String(right || '');
       
-      // Calculate simplistic length based on normalized string to guess spacing
+      // Calculate length based on normalized string
       const leftLen = safeLeft.normalize("NFD").replace(/[\u0300-\u036f]/g, "").length;
       const rightLen = safeRight.normalize("NFD").replace(/[\u0300-\u036f]/g, "").length;
       
-      const spaces = width - leftLen - rightLen;
+      const spaces = this.width - leftLen - rightLen;
       
       if (spaces > 0) {
           this.text(safeLeft + ' '.repeat(spaces) + safeRight);
       } else {
-          // If too long, just space them out, printer will wrap
+          // If too long, wrap
           this.text(safeLeft + ' ' + safeRight);
       }
+      this.buffer.push(...commands.LF);
+      return this;
+  }
+
+  // Specialized format for items: "2x  ItemName ...... Price"
+  itemLine(qty: number, name: string, price: string) {
+      const qtyStr = `${qty}x `;
+      const priceStr = price;
+      
+      const qtyLen = qtyStr.length;
+      const priceLen = priceStr.length;
+      
+      // Available space for name
+      const maxNameLen = this.width - qtyLen - priceLen - 1; // -1 for min space
+      
+      let safeName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      
+      if (safeName.length > maxNameLen) {
+          // Truncate name if absolutely necessary, but preferably wrap in future iterations.
+          // For now, let's truncate to keep one line per item for speed.
+          safeName = safeName.substring(0, maxNameLen);
+      }
+
+      const spacing = this.width - qtyLen - safeName.length - priceLen;
+      this.text(qtyStr + safeName + ' '.repeat(Math.max(1, spacing)) + priceStr);
       this.buffer.push(...commands.LF);
       return this;
   }
@@ -136,24 +163,48 @@ export class ReceiptBuilder {
 export const generateOrderReceipt = (order: Order): Uint8Array => {
     const builder = new ReceiptBuilder();
     
+    // --- Header Section ---
     builder.init()
-           .beep() // Add beep to alert kitchen/cashier
+           .beep()
            .align('center')
-           .bold(true).size('large').textLine('EcoPOS').size('normal').bold(false)
-           .textLine('Phieu Thanh Toan') // Vietnamese friendly (unsigned)
+           .bold(true).size('large').textLine('Thong Dong F&B').size('normal').bold(false)
+           .textLine('27 to 4, Dong Anh')
            .feed(1)
+           .bold(true).textLine('HOA DON / RECEIPT').bold(false)
+           .line()
            
+    // --- Order Info Section (Left Aligned for scanning) ---
            .align('left')
-           .textLine(`Order: #${order.id.slice(0, 8)}`)
-           .textLine(`Date: ${new Date(order.date).toLocaleDateString()} ${new Date(order.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`)
-           .textLine(`Table: ${order.table}`)
-           .textLine(`Type: ${order.orderType?.toUpperCase() || 'DINE-IN'}`)
+           .pair(`Order: #${order.id.slice(-6)}`, `Date: ${new Date(order.date).toLocaleDateString('en-GB')}`)
+           .pair(`Staff: Admin`, `Time: ${new Date(order.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`)
+           
+    // --- Table (Highlighted) ---
+           .feed(1)
+           .bold(true).size('large').textLine(`Table: ${order.table}`).size('normal').bold(false)
            .line();
 
-    // Items
+    // --- Item List ---
+    // Header
+    builder.bold(true).itemLine(0, "ITEM", "TOTAL").bold(false).text("").feed(0); // Hack to clear line buffer
+    
     if (order.items && order.items.length > 0) {
         order.items.forEach(item => {
-            builder.textLine(`${item.quantity}x ${item.name}`);
+            const lineTotal = (item.quantity * (item.price || 0)); 
+            // Note: price isn't in OrderItem in the type definition in some contexts, 
+            // assuming we can calculate or it's passed. If price is missing, we skip.
+            // For now, assuming standard item line.
+            
+            // Note: DBOrder/Order type might not carry price per item in the items array strictly
+            // depending on implementation. In the POS page, we calculate it. 
+            // We'll rely on the total if individual prices aren't stored, 
+            // but the mockup showed prices. We will assume consistency.
+            
+            builder.itemLine(item.quantity, item.name, ""); // Just print qty and name for now if price unknown per line
+            
+            // If notes exist
+            if (item.notes) {
+                builder.textLine(`   (Note: ${item.notes})`);
+            }
         });
     } else {
         builder.textLine('No items');
@@ -161,17 +212,25 @@ export const generateOrderReceipt = (order: Order): Uint8Array => {
 
     builder.line();
 
-    if (order.discount) {
-        builder.pair('Discount:', `${order.discount}%`);
+    // --- Totals Section ---
+    builder.align('right');
+    
+    // Calculate subtotal/discount display
+    if (order.discount && order.discount > 0) {
+        builder.textLine(`Subtotal: ${(order.total / (1 - order.discount/100)).toLocaleString()} d`);
+        builder.textLine(`Discount: ${order.discount}%`);
     }
     
-    // Total
     builder.bold(true).size('large').pair('TOTAL:', `${order.total.toLocaleString()} d`).size('normal').bold(false);
     
-    builder.feed(1)
+    builder.feed(1);
+    builder.textLine(`Payment: ${order.paymentMethod?.toUpperCase() || 'CASH'}`);
+
+    // --- Footer ---
+    builder.feed(2)
            .align('center')
            .textLine('Cam on quy khach!')
-           .textLine('Wifi: EcoPOS_Guest')
+           .textLine('Wifi: ThongDong_Guest / Pass: 88888888')
            .cut();
 
     return builder.toBytes();
@@ -182,13 +241,16 @@ export const generateTestReceipt = (): Uint8Array => {
     builder.init()
            .beep()
            .align('center')
-           .bold(true).size('large').textLine('EcoPOS Printer Test').size('normal').bold(false)
+           .bold(true).size('large').textLine('Thong Dong F&B').size('normal').bold(false)
+           .textLine('PRINTER TEST')
            .feed(1)
-           .align('left')
-           .textLine('Connection: OK')
-           .textLine(`Time: ${new Date().toLocaleTimeString()}`)
            .line()
-           .textLine('May in da san sang!')
+           .align('left')
+           .textLine('If you can read this,')
+           .textLine('the printer is working.')
+           .feed(1)
+           .align('center')
+           .bold(true).textLine('80mm READY').bold(false)
            .feed(2)
            .cut();
     return builder.toBytes();

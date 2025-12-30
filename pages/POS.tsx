@@ -979,8 +979,14 @@ const POS: React.FC = () => {
                      <span className="font-medium text-red-500">- {discountAmount.toLocaleString()} ₫</span>
                  </div>
 
-                 <div className="flex justify-between items-center text-gray-500 dark:text-gray-400 cursor-pointer hover:text-primary transition-colors" onClick={() => setIsTaxModalOpen(true)}>
-                     <span className="flex items-center gap-1 border-b border-dashed border-gray-300 dark:border-gray-600">{t('pos.tax')} ({taxRate}%)</span>
+                 {/* Restrict tax editing to admins only */}
+                 <div 
+                    className={`flex justify-between items-center text-gray-500 dark:text-gray-400 transition-colors ${user?.role === 'admin' ? 'cursor-pointer hover:text-primary' : 'cursor-default'}`} 
+                    onClick={() => user?.role === 'admin' && setIsTaxModalOpen(true)}
+                 >
+                     <span className={`flex items-center gap-1 ${user?.role === 'admin' ? 'border-b border-dashed border-gray-300 dark:border-gray-600' : ''}`}>
+                        {t('pos.tax')} ({taxRate}%)
+                     </span>
                      <span className="font-medium">{tax.toLocaleString()} ₫</span>
                  </div>
              </div>
